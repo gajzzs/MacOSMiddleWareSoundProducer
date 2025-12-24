@@ -65,6 +65,7 @@ class AppObserver {
         
         let notifications = [
             kAXTitleChangedNotification,
+            kAXValueChangedNotification, // Detects content/text changes
             kAXWindowCreatedNotification,
             kAXUIElementDestroyedNotification
         ]
@@ -84,26 +85,18 @@ class AppObserver {
     
     private func handleNotification(notification: CFString, element: AXUIElement) {
         let name = notification as String
-        // print("🔔 Activity: \(name)")
+        let now = Date()
         
+        // --- 1. Title Changes (Navigating Tabs, Directories) ---
         if name == kAXTitleChangedNotification as String {
-             // Extract Title
              var value: AnyObject?
              let result = AXUIElementCopyAttributeValue(element, kAXTitleAttribute as CFString, &value)
              
              if result == .success, let newTitle = value as? String {
-                 // 1. Filter Duplicates ("No actual change")
                  if newTitle == lastKnownTitle { return }
-                 
-                 // 2. Filter Rapid Flapping (optional, e.g. progress bars)
-                 let now = Date()
                  if now.timeIntervalSince(lastTitleChangeTime) < 0.1 { return }
                  
-                 // 3. Filter Minor Status Changes (e.g. dirty bit "*")
-                 // If the only difference is a leading/trailing " *" or " - ", maybe ignore?
-                 // For now, strict inequality is better than blind firing.
-                 
-                 Logger.monitor.debug("Title Changed: '\(self.lastKnownTitle, privacy: .public)' -> '\(newTitle, privacy: .public)'")
+                 Logger.monitor.debug("Title: '\(newTitle, privacy: .public)'")
                  lastKnownTitle = newTitle
                  lastTitleChangeTime = now
                  
@@ -111,8 +104,60 @@ class AppObserver {
              }
         }
         
+        // --- 2. Content Changes (Terminal Output, Loading Indicators) ---
+        if name == kAXValueChangedNotification as String {
+            // A. Get The Element Role (What is it?)
+            var roleRef: AnyObject?
+            _ = AXUIElementCopyAttributeValue(element, kAXRoleAttribute as CFString, &roleRef)
+            let role = roleRef as? String ?? "Unknown"
+            
+            // B. Filter Noise (ScrollBars, Layouts, etc.)
+            if shouldIgnore(role: role) { return }
+
+            // C. Throttle
+            if now.timeIntervalSince(lastTitleChangeTime) < 0.25 { return }
+            lastTitleChangeTime = now 
+            
+            // D. Optional: Check Value (Content)
+            // var valueRef: AnyObject?
+            // _ = AXUIElementCopyAttributeValue(element, kAXValueAttribute as CFString, &valueRef)
+            // let value = valueRef as? String ?? ""
+            if role.contains("Unknown") { return } // Ignore empty updates?
+            
+            Logger.monitor.debug("UI Change: [\(role)]")
+            SoundManager.shared.play(event: "app_activity")
+        }
+        
+        // --- 3. Window Lifecycle ---
         if name == kAXWindowCreatedNotification as String {
             SoundManager.shared.play(event: "window_open")
         }
+    }
+
+    private func shouldIgnore(role: String) -> Bool {
+        // Ignored Roles (Noise & Structure)
+        let ignored: Set<String> = [
+            // Structural / Layout
+            "AXSplitGroup", "AXSplitter",
+            "AXGroup", "AXBox", "AXDrawer", "AXGrowArea", "AXMatte",
+            "AXRuler", "AXRulerMarker", "AXGrid", "AXColumn", "AXRow", 
+            
+            // Web / Browser
+            "AXWebArea", "AXLink", "AXList",
+            "AXTextField", "AXTextArea", // Prevent double-typing sounds
+            
+            // Menus & Chrome
+            "AXToolbar", "AXMenu", "AXMenuItem", "AXMenuBar", "AXMenuBarItem",
+            "AXPopover", "AXHelpTag", "AXSystemWide",
+            
+            // Controls that trigger often but aren't "Content" updates
+            // "AXButton", // Maybe keep buttons?
+            "AXCheckBox", "AXRadioButton", "AXRadioGroup", "AXDisclosureTriangle",
+            "AXSlider", // 60fps updates, too noisy
+            "AXValueIndicator", "AXRelevanceIndicator", "AXBusyIndicator", // Spinner noise
+            "AXUnknown",
+        ]
+        
+        return ignored.contains(role)
     }
 }

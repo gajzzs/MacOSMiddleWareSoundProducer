@@ -10,6 +10,13 @@ A macOS middleware that turns system activity into sounds that feel real.
 - App Activity: Loading/Processing sounds when the active app updates its title (e.g., Terminal commands).
 - Network Activity: Data transfer sounds for the currently active application.
 
+### File Monitoring Scope
+To prevent constant system noise, this tool **only** monitors specific user directories:
+- `~/Desktop`
+- `~/Documents`
+
+*Changes in Downloads, Home, or System folders are ignored.*
+
 ## Requirements
 
 - **macOS 13.0+** (Ventura or later recommended)
@@ -32,6 +39,12 @@ A macOS middleware that turns system activity into sounds that feel real.
 3.  **Run in Background**:
     You can run it directly from the terminal, or quit the terminal and it will stay running (if launched via `swift run &`).
     Control the app via the **Waveform Icon** in the Menu Bar.
+
+4.  **Foreground Mode (Debug)**:
+    If you want to see logs or run it in your terminal:
+    ```bash
+    MacOSMiddleWareForeground=1 swift run
+    ```
 
 ### Showcase Demo 🎬
 
