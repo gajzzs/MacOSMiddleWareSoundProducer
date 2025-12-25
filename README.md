@@ -56,7 +56,7 @@ To prevent constant system noise, this tool **only** monitors specific user dire
 
 Edit `config.json` to change sound files or mappings:
 
-```json
+```
 {
     "events": {
         "window_close": "path/to/sound.mp3",
@@ -64,6 +64,39 @@ Edit `config.json` to change sound files or mappings:
         ...
     }
 }
+```
+
+### Environment Variables
+You can override configuration dynamically using environment variables.
+
+#### 1. Audio Overrides
+Override any event sound path by prefixing the event name with `MW_SOUND_`.
+```bash
+export MW_SOUND_WINDOW_OPEN="/path/to/custom_open.mp3"
+export MW_SOUND_APP_ACTIVITY="/path/to/blip.wav"
+```
+
+#### 2. Role Filtering
+Fine-tune which Accessibility Roles trigger sounds.
+
+**Role Groups**:
+- `Structural` (SplitGroups, Drawers, Grids - *Ignored by default*)
+- `Web` (Links, WebAreas - *Ignored by default*)
+- `Input` (TextFields, TextAreas - *Ignored by default*)
+- `Menus` (Status Bars, Menu Items - *Ignored by default*)
+- `Controls` (Checkboxes, Sliders, Buttons - *Ignored by default*)
+
+**Commands**:
+```bash
+# Enable a group (Un-ignore)
+export MW_ENABLE_GROUP="Structural,Web"
+
+# Disable a group (Force Ignore)
+export MW_DISABLE_GROUP="Controls"
+
+# Specific Roles
+export MW_INCLUDE_ROLES="AXButton"
+export MW_IGNORE_ROLES="AXTitle"
 ```
 
 ## Tips for Best Experience
@@ -90,6 +123,11 @@ If you miss the animations, run these commands:
 defaults delete -g NSAutomaticWindowAnimationsEnabled
 defaults delete -g NSWindowResizeTime
 ```
+
+## Roadmap / Known Issues
+
+- [ ] **optimization**: Fix high system usage (likely due to aggressive Accessibility polling or `nettop` monitoring).
+- [ ] **features**: Add filter for specific applications.
 
 ## License
 

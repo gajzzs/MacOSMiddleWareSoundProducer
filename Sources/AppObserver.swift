@@ -1,3 +1,16 @@
+//
+//  AppObserver.swift
+//  MacOSMiddleWareSoundProducer
+//
+//  Created by User on 2024-12-25.
+//  Summary: Monitors active applications and accessibility events to trigger sound effects.
+//  Changes:
+//  - Added environment variable support for dynamic role filtering.
+//  - MW_IGNORE_ROLES: Add additional roles to ignore.
+//  - MW_INCLUDE_ROLES: Remove roles from the ignore list (allow them).
+//  - Default ignored roles preserved as requested.
+//
+
 import Cocoa
 import ApplicationServices
 import os
@@ -8,7 +21,101 @@ class AppObserver {
     private var currentObserver: AXObserver?
     private var currentPid: pid_t?
     
+    // --- Role Groups ---
+    private static let rolesStructural: Set<String> = [
+        "AXSplitGroup", "AXSplitter", "AXGroup", "AXBox", "AXDrawer", 
+        "AXGrowArea", "AXMatte", "AXRuler", "AXRulerMarker", "AXGrid", "AXColumn", "AXRow"
+    ]
+    
+    private static let rolesWeb: Set<String> = [
+        "AXWebArea", "AXLink", "AXList"
+    ]
+    
+    // Prevent double-typing sounds (using text field changes for feedback instead)
+    private static let rolesInput: Set<String> = [
+        "AXTextField", "AXTextArea"
+    ]
+    
+    private static let rolesMenus: Set<String> = [
+        "AXToolbar", "AXMenu", "AXMenuItem", "AXMenuBar", "AXMenuBarItem",
+        "AXPopover", "AXHelpTag", "AXSystemWide"
+    ]
+    
+    private static let rolesControls: Set<String> = [
+        "AXCheckBox", "AXRadioButton", "AXRadioGroup", "AXDisclosureTriangle",
+        "AXSlider", "AXValueIndicator", "AXRelevanceIndicator", "AXBusyIndicator",
+        "AXButton" // Often too frequent, can be enabled if needed
+    ]
+    
+    private static let rolesUnknown: Set<String> = ["AXUnknown", "Unknown"]
+    
+    // Default ignored roles (Everything above)
+    private let defaultIgnoredRoles: Set<String>
+    
+    private var effectiveIgnoredRoles: Set<String> = []
+    
+    private let roleGroups: [String: Set<String>] = [
+        "structural": AppObserver.rolesStructural,
+        "web": AppObserver.rolesWeb,
+        "input": AppObserver.rolesInput,
+        "menus": AppObserver.rolesMenus,
+        "controls": AppObserver.rolesControls,
+        "unknown": AppObserver.rolesUnknown
+    ]
+    
     private init() {
+        // 1. Build Defaults (Union of all groups)
+        var defaults: Set<String> = []
+        defaults.formUnion(AppObserver.rolesStructural)
+        defaults.formUnion(AppObserver.rolesWeb)
+        defaults.formUnion(AppObserver.rolesInput)
+        defaults.formUnion(AppObserver.rolesMenus)
+        defaults.formUnion(AppObserver.rolesControls)
+        defaults.formUnion(AppObserver.rolesUnknown)
+        self.defaultIgnoredRoles = defaults
+        
+        // Start with defaults
+        self.effectiveIgnoredRoles = defaults
+        
+        let env = ProcessInfo.processInfo.environment
+        
+        // 2. Handle Group Enables (MW_ENABLE_GROUP="Structural,Web") -> Removes them from Ignore List
+        if let enableGroups = env["MW_ENABLE_GROUP"] {
+            let groups = enableGroups.split(separator: ",").map { String($0).trimmingCharacters(in: .whitespaces).lowercased() }
+            for group in groups {
+                if let roles = roleGroups[group] {
+                    self.effectiveIgnoredRoles.subtract(roles)
+                    Logger.monitor.debug("Group Enabled (Un-ignored): \(group.capitalized)")
+                }
+            }
+        }
+        
+        // 3. Handle Group Disables (MW_DISABLE_GROUP) -> Adds them to Ignore List (Re-enforce defaults or add new ones)
+        if let disableGroups = env["MW_DISABLE_GROUP"] {
+            let groups = disableGroups.split(separator: ",").map { String($0).trimmingCharacters(in: .whitespaces).lowercased() }
+            for group in groups {
+                if let roles = roleGroups[group] {
+                    self.effectiveIgnoredRoles.formUnion(roles)
+                    Logger.monitor.debug("Group Disabled (Ignored): \(group.capitalized)")
+                }
+            }
+        }
+        
+        // 4. Handle Specific Role Overrides
+        // MW_IGNORE_ROLES: Add specific roles to ignore
+        if let ignoreVar = env["MW_IGNORE_ROLES"] {
+            let roles = ignoreVar.split(separator: ",").map { String($0).trimmingCharacters(in: .whitespaces) }
+            self.effectiveIgnoredRoles.formUnion(roles)
+            Logger.monitor.debug("Ignored specific roles via Env: \(roles)")
+        }
+        
+        // MW_INCLUDE_ROLES: Remove specific roles from ignore list
+        if let includeVar = env["MW_INCLUDE_ROLES"] {
+            let roles = includeVar.split(separator: ",").map { String($0).trimmingCharacters(in: .whitespaces) }
+            self.effectiveIgnoredRoles.subtract(roles)
+            Logger.monitor.debug("Included specific roles via Env: \(roles)")
+        }
+        
         // Listen for App Switching
         NSWorkspace.shared.notificationCenter.addObserver(self, 
                                                         selector: #selector(appActivated(_:)), 
@@ -135,29 +242,6 @@ class AppObserver {
     }
 
     private func shouldIgnore(role: String) -> Bool {
-        // Ignored Roles (Noise & Structure)
-        let ignored: Set<String> = [
-            // Structural / Layout
-            "AXSplitGroup", "AXSplitter",
-            "AXGroup", "AXBox", "AXDrawer", "AXGrowArea", "AXMatte",
-            "AXRuler", "AXRulerMarker", "AXGrid", "AXColumn", "AXRow", 
-            
-            // Web / Browser
-            "AXWebArea", "AXLink", "AXList",
-            "AXTextField", "AXTextArea", // Prevent double-typing sounds
-            
-            // Menus & Chrome
-            "AXToolbar", "AXMenu", "AXMenuItem", "AXMenuBar", "AXMenuBarItem",
-            "AXPopover", "AXHelpTag", "AXSystemWide",
-            
-            // Controls that trigger often but aren't "Content" updates
-            // "AXButton", // Maybe keep buttons?
-            "AXCheckBox", "AXRadioButton", "AXRadioGroup", "AXDisclosureTriangle",
-            "AXSlider", // 60fps updates, too noisy
-            "AXValueIndicator", "AXRelevanceIndicator", "AXBusyIndicator", // Spinner noise
-            "AXUnknown",
-        ]
-        
-        return ignored.contains(role)
+        return effectiveIgnoredRoles.contains(role)
     }
 }

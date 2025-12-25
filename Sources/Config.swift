@@ -31,6 +31,8 @@ class ConfigLoader {
         
         Logger.config.debug("Searching for config in: \(pathsToCheck.description, privacy: .public)")
         
+        var finalConfig: SoundConfig?
+        
         for path in pathsToCheck {
             if FileManager.default.fileExists(atPath: path) {
                 do {
@@ -38,18 +40,42 @@ class ConfigLoader {
                     var config = try JSONDecoder().decode(SoundConfig.self, from: data)
                     Logger.config.info("Loaded config from: \(path, privacy: .public)")
                     
-                    // Optional: Resolve relative paths (starts with ./) relative to the config file location
+                    // Resolve relative paths (starts with ./) relative to the config file location
                     config = resolveRelativePaths(config, configPath: path)
                     
-                    return config
+                    finalConfig = config
+                    break // Stop after finding the first valid config
                 } catch {
                     Logger.config.error("Failed to parse config at \(path, privacy: .public): \(error, privacy: .public)")
                 }
             }
         }
         
-        Logger.config.error("No config.json found in search paths.")
-        return nil
+        // If no config found, create a basic empty one to allow Env Vars to work optionally
+        var events = finalConfig?.events ?? [:]
+        let keys = finalConfig?.keys
+        
+        // Overlay Environment Variables
+        // Format: MW_SOUND_EVENT_NAME = /path/to/sound.mp3
+        let env = ProcessInfo.processInfo.environment
+        for (key, value) in env {
+            if key.hasPrefix("MW_SOUND_") {
+                let index = key.index(key.startIndex, offsetBy: 9) // Length of "MW_SOUND_"
+                let eventName = String(key[index...]).lowercased()
+                
+                if !eventName.isEmpty && !value.isEmpty {
+                    events[eventName] = value
+                    Logger.config.debug("Env Override: \(eventName) -> \(value)")
+                }
+            }
+        }
+        
+        if finalConfig == nil && events.isEmpty {
+             Logger.config.error("No config.json found and no MW_SOUND_ env vars provided.")
+             return nil
+        }
+        
+        return SoundConfig(events: events, keys: keys)
     }
     
     private func resolveRelativePaths(_ config: SoundConfig, configPath: String) -> SoundConfig {
